@@ -49,14 +49,17 @@ async function startServer() {
   });
 
   // Qdrant Proxy Endpoint
-  app.post("/api/qdrant/:action", async (req, res) => {
+  app.all("/api/qdrant/:action", async (req, res) => {
     const { action } = req.params;
-    const qdrantUrl = process.env.QDRANT_URL;
+    let qdrantUrl = process.env.QDRANT_URL;
     const qdrantApiKey = process.env.QDRANT_API_KEY;
 
     if (!qdrantUrl) {
       return res.status(500).json({ error: "Qdrant URL missing in environment" });
     }
+
+    // Sanitize URL: remove trailing slashes and common dashboard paths
+    qdrantUrl = qdrantUrl.replace(/\/+$/, "").replace(/\/dashboard.*$/, "");
 
     try {
       const headers: any = { "Content-Type": "application/json" };
