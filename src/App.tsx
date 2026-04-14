@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { GoogleGenAI } from "@google/genai";
 import { 
   Settings, 
   RefreshCw, 
@@ -16,9 +15,6 @@ import {
   Box
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-
-// Initialize Gemini
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
 interface JiraIssue {
   key: string;
@@ -92,13 +88,16 @@ export default function App() {
 
   const generateEmbedding = async (text: string) => {
     try {
-      const result = await ai.models.embedContent({
-        model: "gemini-embedding-2-preview",
-        contents: [{ parts: [{ text }] }]
+      const res = await fetch("/api/embed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
       });
-      return result.embeddings[0].values;
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      return data.embedding;
     } catch (error) {
-      console.error("Embedding error:", error);
+      console.error("Local embedding error:", error);
       throw error;
     }
   };
@@ -138,7 +137,7 @@ export default function App() {
         await fetch("/api/qdrant/create-collection", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: collectionName, vectorSize: 768 }) // Gemini embeddings are 768 dims
+          body: JSON.stringify({ name: collectionName, vectorSize: 384 }) // Local embeddings are 384 dims
         });
         addLog(`Collection ${collectionName} created.`);
       } else {
@@ -435,7 +434,7 @@ export default function App() {
                     </div>
                     <div className="flex justify-between py-3 text-xs">
                       <span className="text-text-muted">Model Embeddingów</span>
-                      <span className="font-bold text-primary-main">gemini-embedding-2</span>
+                      <span className="font-bold text-primary-main">Local (MiniLM-L6)</span>
                     </div>
                   </div>
 
@@ -606,11 +605,11 @@ export default function App() {
 
                   <div className="p-4 bg-slate-50 rounded-xl border border-border-main flex justify-between items-center">
                     <div>
-                      <label className="text-[10px] font-bold text-text-muted uppercase">Gemini AI Engine</label>
-                      <div className="text-sm font-mono mt-1">gemini-1.5-flash / embedding-2</div>
+                      <label className="text-[10px] font-bold text-text-muted uppercase">Lokalny Silnik AI</label>
+                      <div className="text-sm font-mono mt-1">Transformers.js / all-MiniLM-L6-v2</div>
                     </div>
                     <div className="flex items-center gap-2 text-emerald-600 text-xs font-bold bg-emerald-50 px-3 py-1 rounded-full">
-                      <div className="w-1.5 h-1.5 bg-emerald-600 rounded-full" /> Połączono
+                      <div className="w-1.5 h-1.5 bg-emerald-600 rounded-full" /> Aktywny (Local)
                     </div>
                   </div>
                 </div>

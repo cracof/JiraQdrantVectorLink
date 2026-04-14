@@ -4,6 +4,7 @@ import path from "path";
 import axios from "axios";
 import cors from "cors";
 import dotenv from "dotenv";
+import { pipeline } from "@xenova/transformers";
 
 dotenv.config();
 
@@ -11,8 +12,36 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Local Embedding Pipeline
+  let embedder: any = null;
+  async function getEmbedder() {
+    if (!embedder) {
+      console.log("Loading local embedding model (Xenova/all-MiniLM-L6-v2)...");
+      embedder = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
+      console.log("Local embedding model loaded.");
+    }
+    return embedder;
+  }
+
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
+
+  // Local Embedding Endpoint
+  app.post("/api/embed", async (req, res) => {
+    try {
+      const { text } = req.body;
+      if (!text) return res.status(400).json({ error: "Text is required" });
+
+      const generate = await getEmbedder();
+      const output = await generate(text, { pooling: 'mean', normalize: true });
+      const embedding = Array.from(output.data);
+      
+      res.json({ embedding });
+    } catch (error: any) {
+      console.error("Embedding Error:", error.message);
+      res.status(500).json({ error: "Failed to generate embedding locally", details: error.message });
+    }
+  });
 
   // Jira Proxy Endpoint
   app.get("/api/jira/issues", async (req, res) => {
