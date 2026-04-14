@@ -1,0 +1,6 @@
+{
+  "name": "Jira to Qdrant Sync",
+  "description": "Syncs Jira issues to a Qdrant vector database for LLM-powered search and analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
