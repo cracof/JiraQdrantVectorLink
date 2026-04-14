@@ -57,7 +57,7 @@ interface SyncStatus {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "search">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "search" | "config" | "rules">("dashboard");
   const [projectKey, setProjectKey] = useState(() => localStorage.getItem("jira_project_key") || process.env.VITE_JIRA_PROJECT_KEY || "");
   const [issueTypes, setIssueTypes] = useState(() => localStorage.getItem("jira_issue_types") || process.env.VITE_JIRA_ISSUE_TYPE || "Błąd w programie, Zadanie, Incydent");
   const [collectionName, setCollectionName] = useState(() => localStorage.getItem("qdrant_collection") || process.env.VITE_QDRANT_COLLECTION_NAME || "jira_issues");
@@ -302,12 +302,18 @@ export default function App() {
               >
                 <Search className="w-4 h-4" /> Eksplorator Wektorów
               </button>
-              <a href="#" className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-main hover:bg-slate-50 transition-colors text-sm">
+              <button 
+                onClick={() => setActiveTab("config")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${activeTab === 'config' ? 'bg-blue-50 text-primary-main font-semibold' : 'text-text-main hover:bg-slate-50'}`}
+              >
                 <Settings className="w-4 h-4" /> Konfiguracja API
-              </a>
-              <a href="#" className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-main hover:bg-slate-50 transition-colors text-sm">
+              </button>
+              <button 
+                onClick={() => setActiveTab("rules")}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${activeTab === 'rules' ? 'bg-blue-50 text-primary-main font-semibold' : 'text-text-main hover:bg-slate-50'}`}
+              >
                 <FileCode className="w-4 h-4" /> Zasady Parsowania
-              </a>
+              </button>
             </div>
           </div>
 
@@ -338,10 +344,14 @@ export default function App() {
         <header className="flex justify-between items-center">
           <div>
             <h1 className="text-2xl font-bold tracking-tight mb-1">
-              {activeTab === 'dashboard' ? 'Dashboard Indeksowania' : 'Eksplorator Wektorów'}
+              {activeTab === 'dashboard' ? 'Dashboard Indeksowania' : 
+               activeTab === 'search' ? 'Eksplorator Wektorów' :
+               activeTab === 'config' ? 'Konfiguracja API' : 'Zasady Parsowania'}
             </h1>
             <p className="text-sm text-text-muted">
-              {activeTab === 'dashboard' ? 'Monitorowanie procesu wektoryzacji zgłoszeń Jira' : 'Przeszukiwanie semantyczne bazy wiedzy'}
+              {activeTab === 'dashboard' ? 'Monitorowanie procesu wektoryzacji zgłoszeń Jira' : 
+               activeTab === 'search' ? 'Przeszukiwanie semantyczne bazy wiedzy' :
+               activeTab === 'config' ? 'Zarządzanie połączeniami z usługami zewnętrznymi' : 'Definiowanie struktury danych wektorowych'}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -394,37 +404,38 @@ export default function App() {
                   </h3>
                   
                   <div className="space-y-4 flex-1">
-                    <div className="flex justify-between py-3 border-b border-border-main text-sm">
-                      <span className="text-text-muted">Jira Project</span>
+                    <div className="flex flex-col gap-1.5 py-3 border-b border-border-main">
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Jira Project Key</label>
                       <input 
                         type="text" 
                         value={projectKey}
                         onChange={(e) => setProjectKey(e.target.value.toUpperCase())}
-                        className="text-right font-medium bg-transparent outline-none focus:text-primary-main w-24"
+                        className="w-full bg-slate-50 border border-border-main rounded px-3 py-2 text-sm font-semibold focus:ring-2 focus:ring-primary-main outline-none"
+                        placeholder="np. SD"
                       />
                     </div>
-                    <div className="flex justify-between py-3 border-b border-border-main text-sm">
-                      <span className="text-text-muted">Issue Types</span>
+                    <div className="flex flex-col gap-1.5 py-3 border-b border-border-main">
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Typy Zgłoszeń (Issue Types)</label>
                       <input 
                         type="text" 
                         value={issueTypes}
                         onChange={(e) => setIssueTypes(e.target.value)}
-                        className="text-right font-medium bg-transparent outline-none focus:text-primary-main w-48"
-                        placeholder="Błąd, Zadanie..."
+                        className="w-full bg-slate-50 border border-border-main rounded px-3 py-2 text-sm font-semibold focus:ring-2 focus:ring-primary-main outline-none"
+                        placeholder="np. Błąd, Zadanie"
                       />
                     </div>
-                    <div className="flex justify-between py-3 border-b border-border-main text-sm">
-                      <span className="text-text-muted">Qdrant Collection</span>
+                    <div className="flex flex-col gap-1.5 py-3 border-b border-border-main">
+                      <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Kolekcja Qdrant</label>
                       <input 
                         type="text" 
                         value={collectionName}
                         onChange={(e) => setCollectionName(e.target.value)}
-                        className="text-right font-medium bg-transparent outline-none focus:text-primary-main w-32"
+                        className="w-full bg-slate-50 border border-border-main rounded px-3 py-2 text-sm font-semibold focus:ring-2 focus:ring-primary-main outline-none"
                       />
                     </div>
-                    <div className="flex justify-between py-3 border-b border-border-main text-sm">
-                      <span className="text-text-muted">Embedding Model</span>
-                      <span className="font-medium">gemini-embedding-2</span>
+                    <div className="flex justify-between py-3 text-xs">
+                      <span className="text-text-muted">Model Embeddingów</span>
+                      <span className="font-bold text-primary-main">gemini-embedding-2</span>
                     </div>
                   </div>
 
@@ -495,7 +506,7 @@ export default function App() {
               </div>
             </div>
           </>
-        ) : (
+        ) : activeTab === 'search' ? (
           <div className="flex-1 flex flex-col gap-6">
             <section className="bg-sidebar p-8 rounded-xl border border-border-main shadow-sm">
               <form onSubmit={handleSearch} className="flex gap-3">
@@ -563,6 +574,79 @@ export default function App() {
                   ))
                 )}
               </AnimatePresence>
+            </div>
+          </div>
+        ) : activeTab === 'config' ? (
+          <div className="bg-sidebar rounded-xl border border-border-main shadow-sm p-8 flex flex-col gap-6 flex-1">
+            <div className="max-w-2xl">
+              <h3 className="text-lg font-bold mb-2">Konfiguracja Połączeń API</h3>
+              <p className="text-sm text-text-muted mb-8">Status połączeń z usługami zewnętrznymi skonfigurowanymi w pliku .env.</p>
+              
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="p-4 bg-slate-50 rounded-xl border border-border-main flex justify-between items-center">
+                    <div>
+                      <label className="text-[10px] font-bold text-text-muted uppercase">Jira Instance</label>
+                      <div className="text-sm font-mono mt-1">{process.env.VITE_JIRA_URL || "https://jira.example.com"}</div>
+                    </div>
+                    <div className="flex items-center gap-2 text-emerald-600 text-xs font-bold bg-emerald-50 px-3 py-1 rounded-full">
+                      <div className="w-1.5 h-1.5 bg-emerald-600 rounded-full" /> Połączono
+                    </div>
+                  </div>
+                  
+                  <div className="p-4 bg-slate-50 rounded-xl border border-border-main flex justify-between items-center">
+                    <div>
+                      <label className="text-[10px] font-bold text-text-muted uppercase">Qdrant Vector DB</label>
+                      <div className="text-sm font-mono mt-1">{process.env.VITE_QDRANT_URL || "http://192.168.1.28:6333"}</div>
+                    </div>
+                    <div className="flex items-center gap-2 text-emerald-600 text-xs font-bold bg-emerald-50 px-3 py-1 rounded-full">
+                      <div className="w-1.5 h-1.5 bg-emerald-600 rounded-full" /> Połączono
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-slate-50 rounded-xl border border-border-main flex justify-between items-center">
+                    <div>
+                      <label className="text-[10px] font-bold text-text-muted uppercase">Gemini AI Engine</label>
+                      <div className="text-sm font-mono mt-1">gemini-1.5-flash / embedding-2</div>
+                    </div>
+                    <div className="flex items-center gap-2 text-emerald-600 text-xs font-bold bg-emerald-50 px-3 py-1 rounded-full">
+                      <div className="w-1.5 h-1.5 bg-emerald-600 rounded-full" /> Połączono
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 text-blue-800 text-xs leading-relaxed">
+                  <strong>Informacja:</strong> Zmiana adresów URL i kluczy API wymaga edycji pliku <code>.env</code> na serwerze Proxmox i restartu usługi <code>pm2 restart jira-sync</code>.
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-sidebar rounded-xl border border-border-main shadow-sm p-8 flex flex-col gap-6 flex-1">
+            <div className="max-w-2xl">
+              <h3 className="text-lg font-bold mb-2">Zasady Parsowania i Indeksowania</h3>
+              <p className="text-sm text-text-muted mb-8">Definiuj, jakie dane ze zgłoszeń Jira są przekształcane na wektory i zapisywane w bazie.</p>
+              
+              <div className="space-y-4">
+                {[
+                  { name: 'Klucz (Key)', desc: 'Unikalny identyfikator zgłoszenia (np. MFP-123)' },
+                  { name: 'Tytuł (Summary)', desc: 'Krótki opis problemu' },
+                  { name: 'Opis (Description)', desc: 'Pełna treść zgłoszenia' },
+                  { name: 'Komentarze', desc: 'Historia dyskusji pod zgłoszeniem' },
+                  { name: 'Linki (Issue Links)', desc: 'Powiązania z innymi zadaniami' },
+                  { name: 'Pola Niestandardowe', desc: 'Wszystkie pola typu customfield_XXXXX' }
+                ].map((field) => (
+                  <div key={field.name} className="flex items-center justify-between p-4 bg-white rounded-xl border border-border-main shadow-sm">
+                    <div>
+                      <div className="text-sm font-bold">{field.name}</div>
+                      <div className="text-[11px] text-text-muted">{field.desc}</div>
+                    </div>
+                    <div className="w-10 h-5 bg-emerald-500 rounded-full relative">
+                      <div className="absolute right-1 top-1 w-3 h-3 bg-white rounded-full" />
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
