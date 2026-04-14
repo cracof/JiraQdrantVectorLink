@@ -168,7 +168,10 @@ export default function App() {
           const jiraRes = await fetch(`/api/jira/issues?project=${projectKey}&issueType=${encodedType}&startAt=${startAt}`);
           const data = await jiraRes.json();
 
-          if (data.error) throw new Error(data.error + ": " + (data.details || ""));
+          if (data.error) {
+            const detailMsg = typeof data.details === 'string' ? data.details : JSON.stringify(data.details);
+            throw new Error(`${data.error}: ${detailMsg}`);
+          }
 
           const issues: JiraIssue[] = data.issues || [];
           if (issues.length === 0) {

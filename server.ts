@@ -40,10 +40,11 @@ async function startServer() {
       });
       res.json(response.data);
     } catch (error: any) {
-      console.error("Jira API Error:", error.response?.data || error.message);
+      const errorData = error.response?.data;
+      console.error("Jira API Error:", JSON.stringify(errorData) || error.message);
       res.status(error.response?.status || 500).json({ 
         error: "Failed to fetch from Jira", 
-        details: error.response?.data || error.message 
+        details: typeof errorData === 'object' ? JSON.stringify(errorData) : (errorData || error.message)
       });
     }
   });
