@@ -58,9 +58,22 @@ interface SyncStatus {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "search">("dashboard");
-  const [projectKey, setProjectKey] = useState(process.env.VITE_JIRA_PROJECT_KEY || "");
-  const [issueTypes, setIssueTypes] = useState(process.env.VITE_JIRA_ISSUE_TYPE || "Błąd w programie, Zadanie, Incydent");
-  const [collectionName, setCollectionName] = useState(process.env.VITE_QDRANT_COLLECTION_NAME || "jira_issues");
+  const [projectKey, setProjectKey] = useState(() => localStorage.getItem("jira_project_key") || process.env.VITE_JIRA_PROJECT_KEY || "");
+  const [issueTypes, setIssueTypes] = useState(() => localStorage.getItem("jira_issue_types") || process.env.VITE_JIRA_ISSUE_TYPE || "Błąd w programie, Zadanie, Incydent");
+  const [collectionName, setCollectionName] = useState(() => localStorage.getItem("qdrant_collection") || process.env.VITE_QDRANT_COLLECTION_NAME || "jira_issues");
+
+  // Persist settings to localStorage
+  useEffect(() => {
+    localStorage.setItem("jira_project_key", projectKey);
+  }, [projectKey]);
+
+  useEffect(() => {
+    localStorage.setItem("jira_issue_types", issueTypes);
+  }, [issueTypes]);
+
+  useEffect(() => {
+    localStorage.setItem("qdrant_collection", collectionName);
+  }, [collectionName]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
