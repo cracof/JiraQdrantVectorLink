@@ -46,7 +46,7 @@ interface SyncStatus {
 export default function App() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "search">("dashboard");
   const [projectKey, setProjectKey] = useState(process.env.VITE_JIRA_PROJECT_KEY || "");
-  const [issueType, setIssueType] = useState(process.env.VITE_JIRA_ISSUE_TYPE || "");
+  const [issueTypes, setIssueTypes] = useState(process.env.VITE_JIRA_ISSUE_TYPE || "Błąd w programie, Zadanie, Incydent");
   const [collectionName, setCollectionName] = useState(process.env.VITE_QDRANT_COLLECTION_NAME || "jira_issues");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -124,8 +124,8 @@ export default function App() {
   };
 
   const startSync = async () => {
-    if (!projectKey || !issueType) {
-      setStatus(prev => ({ ...prev, error: "Project Key and Issue Type are required." }));
+    if (!projectKey || !issueTypes) {
+      setStatus(prev => ({ ...prev, error: "Project Key and Issue Types are required." }));
       return;
     }
 
@@ -141,68 +141,76 @@ export default function App() {
     try {
       await checkAndCreateCollection();
 
-      let startAt = 0;
-      let hasMore = true;
+      const typesArray = issueTypes.split(",").map(t => t.trim()).filter(t => t);
+      
+      for (const type of typesArray) {
+        addLog(`--- Processing Issue Type: ${type} ---`);
+        let startAt = 0;
+        let hasMore = true;
 
-      while (hasMore) {
-        addLog(`Fetching issues from Jira (startAt: ${startAt})...`);
-        const jiraRes = await fetch(`/api/jira/issues?project=${projectKey}&issueType=${issueType}&startAt=${startAt}`);
-        const data = await jiraRes.json();
+        while (hasMore) {
+          addLog(`Fetching ${type} from Jira (startAt: ${startAt})...`);
+          // Use encodeURIComponent for Polish characters
+          const encodedType = encodeURIComponent(type);
+          const jiraRes = await fetch(`/api/jira/issues?project=${projectKey}&issueType=${encodedType}&startAt=${startAt}`);
+          const data = await jiraRes.json();
 
-        if (data.error) throw new Error(data.error + ": " + (data.details || ""));
+          if (data.error) throw new Error(data.error + ": " + (data.details || ""));
 
-        const issues: JiraIssue[] = data.issues || [];
-        if (issues.length === 0) {
-          hasMore = false;
-          break;
-        }
+          const issues: JiraIssue[] = data.issues || [];
+          if (issues.length === 0) {
+            hasMore = false;
+            break;
+          }
 
-        setStatus(prev => ({ ...prev, total: data.total }));
+          setStatus(prev => ({ ...prev, total: prev.total + data.total }));
 
-        const points = [];
-        for (const issue of issues) {
-          setStatus(prev => ({ ...prev, currentIssue: issue.key }));
-          
-          const textToEmbed = `
-            Key: ${issue.key}
-            Summary: ${issue.fields.summary}
-            Description: ${issue.fields.description || "No description"}
-            Type: ${issue.fields.issuetype.name}
-            Status: ${issue.fields.status.name}
-            Priority: ${issue.fields.priority.name}
-            Reporter: ${issue.fields.reporter.displayName}
-            Assignee: ${issue.fields.assignee?.displayName || "Unassigned"}
-            Created: ${issue.fields.created}
-          `.trim();
+          const points = [];
+          for (const issue of issues) {
+            setStatus(prev => ({ ...prev, currentIssue: issue.key }));
+            
+            const textToEmbed = `
+              Key: ${issue.key}
+              Summary: ${issue.fields.summary}
+              Description: ${issue.fields.description || "No description"}
+              Type: ${issue.fields.issuetype.name}
+              Status: ${issue.fields.status.name}
+              Priority: ${issue.fields.priority.name}
+              Reporter: ${issue.fields.reporter.displayName}
+              Assignee: ${issue.fields.assignee?.displayName || "Unassigned"}
+              Created: ${issue.fields.created}
+            `.trim();
 
-          addLog(`Generating embedding for ${issue.key}...`);
-          const vector = await generateEmbedding(textToEmbed);
+            addLog(`Generating embedding for ${issue.key}...`);
+            const vector = await generateEmbedding(textToEmbed);
 
-          points.push({
-            id: Math.floor(Math.random() * 1000000000), // Simple random ID for demo, should be more robust
-            vector,
-            payload: {
-              key: issue.key,
-              summary: issue.fields.summary,
-              description: issue.fields.description,
-              created: issue.fields.created,
-              status: issue.fields.status.name,
-              text: textToEmbed
-            }
+            points.push({
+              id: Math.floor(Math.random() * 1000000000),
+              vector,
+              payload: {
+                key: issue.key,
+                summary: issue.fields.summary,
+                description: issue.fields.description,
+                created: issue.fields.created,
+                status: issue.fields.status.name,
+                issueType: issue.fields.issuetype.name,
+                text: textToEmbed
+              }
+            });
+
+            setStatus(prev => ({ ...prev, processed: prev.processed + 1 }));
+          }
+
+          addLog(`Upserting ${points.length} points to Qdrant...`);
+          await fetch("/api/qdrant/upsert", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ collectionName, points })
           });
 
-          setStatus(prev => ({ ...prev, processed: prev.processed + 1 }));
+          startAt += issues.length;
+          if (startAt >= data.total) hasMore = false;
         }
-
-        addLog(`Upserting ${points.length} points to Qdrant...`);
-        await fetch("/api/qdrant/upsert", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ collectionName, points })
-        });
-
-        startAt += issues.length;
-        if (startAt >= data.total) hasMore = false;
       }
 
       addLog("Sync completed successfully!");
@@ -341,12 +349,13 @@ export default function App() {
                       />
                     </div>
                     <div className="flex justify-between py-3 border-b border-border-main text-sm">
-                      <span className="text-text-muted">Issue Type</span>
+                      <span className="text-text-muted">Issue Types</span>
                       <input 
                         type="text" 
-                        value={issueType}
-                        onChange={(e) => setIssueType(e.target.value)}
-                        className="text-right font-medium bg-transparent outline-none focus:text-primary-main w-32"
+                        value={issueTypes}
+                        onChange={(e) => setIssueTypes(e.target.value)}
+                        className="text-right font-medium bg-transparent outline-none focus:text-primary-main w-48"
+                        placeholder="Błąd, Zadanie..."
                       />
                     </div>
                     <div className="flex justify-between py-3 border-b border-border-main text-sm">
