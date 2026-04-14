@@ -31,7 +31,7 @@ async function startServer() {
           jql,
           startAt,
           maxResults: 50,
-          fields: "summary,description,created,issuetype,status,priority,reporter,assignee,comment"
+          fields: "summary,description,created,issuetype,status,priority,reporter,assignee,comment,issuelinks"
         },
         headers: {
           Authorization: `Bearer ${jiraToken}`,

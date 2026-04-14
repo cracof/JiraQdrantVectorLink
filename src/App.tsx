@@ -31,6 +31,19 @@ interface JiraIssue {
     priority: { name: string };
     reporter: { displayName: string };
     assignee: { displayName: string } | null;
+    comment?: {
+      comments: Array<{
+        author: { displayName: string };
+        body: string;
+        created: string;
+      }>;
+    };
+    issuelinks?: Array<{
+      type: { inward: string; outward: string };
+      outwardIssue?: { key: string; fields: { summary: string } };
+      inwardIssue?: { key: string; fields: { summary: string } };
+    }>;
+    [key: string]: any; // For custom fields
   };
 }
 
@@ -169,6 +182,24 @@ export default function App() {
           for (const issue of issues) {
             setStatus(prev => ({ ...prev, currentIssue: issue.key }));
             
+            // Extract comments
+            const commentsText = issue.fields.comment?.comments
+              ?.map(c => `[${c.author.displayName}]: ${c.body}`)
+              .join("\n") || "";
+
+            // Extract links
+            const linksText = issue.fields.issuelinks
+              ?.map(l => {
+                const related = l.outwardIssue || l.inwardIssue;
+                return related ? `${l.type.outward || l.type.inward} ${related.key}: ${related.fields.summary}` : "";
+              })
+              .filter(l => l)
+              .join("\n") || "";
+
+            // Extract custom fields (example from user JSON)
+            const packageTest = issue.fields.customfield_11703?.value || "";
+            const psp = issue.fields.customfield_12310 || "";
+
             const textToEmbed = `
               Key: ${issue.key}
               Summary: ${issue.fields.summary}
@@ -179,6 +210,14 @@ export default function App() {
               Reporter: ${issue.fields.reporter.displayName}
               Assignee: ${issue.fields.assignee?.displayName || "Unassigned"}
               Created: ${issue.fields.created}
+              ${packageTest ? `Package Test: ${packageTest}` : ""}
+              ${psp ? `PSP: ${psp}` : ""}
+              
+              Links:
+              ${linksText || "No links"}
+              
+              Comments:
+              ${commentsText || "No comments"}
             `.trim();
 
             addLog(`Generating embedding for ${issue.key}...`);
