@@ -41,7 +41,20 @@ export class QdrantClient {
   }
 
   async upsert(name: string, points: any[]) {
-    return axios.put(`${this.url}/collections/${name}/points`, { points }, { headers: this.headers });
+    const maxRetries = 3;
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        return await axios.put(`${this.url}/collections/${name}/points`, { points }, { 
+          headers: this.headers,
+          timeout: 30000 // 30s timeout
+        });
+      } catch (error: any) {
+        if (i === maxRetries - 1) throw error;
+        const delay = Math.pow(2, i) * 1000;
+        console.warn(`Upsert failed (attempt ${i + 1}), retrying in ${delay}ms...`, error.message);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
   }
 
   async search(name: string, vector: number[], filter?: any, limit: number = 5) {

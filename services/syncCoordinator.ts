@@ -96,6 +96,9 @@ export class SyncCoordinator {
           
           this.progress.processed++;
           this.onProgressUpdate({ ...this.progress });
+
+          // Small delay to prevent CPU/Network saturation
+          await new Promise(resolve => setTimeout(resolve, 50));
         }
 
         startAt += issues.length;
