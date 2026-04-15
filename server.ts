@@ -1,10 +1,11 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
-import axios from "axios";
 import cors from "cors";
 import dotenv from "dotenv";
-import { pipeline } from "@xenova/transformers";
+import { SyncCoordinator, SyncProgress } from "./services/syncCoordinator";
+import { QdrantClient } from "./services/qdrantClient";
+import { Embedder } from "./services/embedder";
 
 dotenv.config();
 
@@ -12,123 +13,49 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Local Embedding Pipeline
-  let embedder: any = null;
-  async function getEmbedder() {
-    if (!embedder) {
-      console.log("Loading local embedding model (Xenova/all-MiniLM-L6-v2)...");
-      embedder = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
-      console.log("Local embedding model loaded.");
-    }
-    return embedder;
-  }
-
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
 
-  // Local Embedding Endpoint
-  app.post("/api/embed", async (req, res) => {
-    try {
-      const { text } = req.body;
-      if (!text) return res.status(400).json({ error: "Text is required" });
-
-      const generate = await getEmbedder();
-      const output = await generate(text, { pooling: 'mean', normalize: true });
-      const embedding = Array.from(output.data);
-      
-      res.json({ embedding });
-    } catch (error: any) {
-      console.error("Embedding Error:", error.message);
-      res.status(500).json({ error: "Failed to generate embedding locally", details: error.message });
-    }
+  const qdrant = new QdrantClient();
+  let currentProgress: SyncProgress | null = null;
+  
+  const coordinator = new SyncCoordinator((progress) => {
+    currentProgress = progress;
   });
 
-  // Jira Proxy Endpoint
-  app.get("/api/jira/issues", async (req, res) => {
-    const { project, issueType, startAt = 0 } = req.query;
-    const jiraUrl = process.env.JIRA_URL;
-    const jiraToken = process.env.JIRA_TOKEN;
-
-    if (!jiraUrl || !jiraToken) {
-      return res.status(500).json({ error: "Jira configuration missing in environment" });
+  // Sync Endpoint
+  app.post("/api/sync", async (req, res) => {
+    const { project, issueTypes, collection, updatedAfter } = req.body;
+    
+    if (!project || !issueTypes || !collection) {
+      return res.status(400).json({ error: "Missing required parameters" });
     }
 
-    try {
-      const jql = `project = "${project}" AND issuetype = "${issueType}" ORDER BY created DESC`;
-      const response = await axios.get(`${jiraUrl}/rest/api/2/search`, {
-        params: {
-          jql,
-          startAt,
-          maxResults: 50,
-          fields: "summary,description,created,issuetype,status,priority,reporter,assignee,comment,issuelinks"
-        },
-        headers: {
-          Authorization: `Bearer ${jiraToken}`,
-          Accept: "application/json",
-        },
-      });
-      res.json(response.data);
-    } catch (error: any) {
-      const errorData = error.response?.data;
-      console.error("Jira API Error:", JSON.stringify(errorData) || error.message);
-      res.status(error.response?.status || 500).json({ 
-        error: "Failed to fetch from Jira", 
-        details: typeof errorData === 'object' ? JSON.stringify(errorData) : (errorData || error.message)
-      });
-    }
+    // Run in background
+    coordinator.runSync(project, issueTypes, collection, updatedAfter);
+    
+    res.json({ message: "Sync started in background" });
   });
 
-  // Qdrant Proxy Endpoint
-  app.all("/api/qdrant/:action", async (req, res) => {
-    const { action } = req.params;
-    let qdrantUrl = process.env.QDRANT_URL;
-    const qdrantApiKey = process.env.QDRANT_API_KEY;
+  // Sync Status Endpoint
+  app.get("/api/sync/status", (req, res) => {
+    res.json(currentProgress || { isSyncing: false, logs: [] });
+  });
 
-    if (!qdrantUrl) {
-      return res.status(500).json({ error: "Qdrant URL missing in environment" });
+  // Search Endpoint
+  app.post("/api/search", async (req, res) => {
+    const { query, collection, filters, limit = 5 } = req.body;
+    
+    if (!query || !collection) {
+      return res.status(400).json({ error: "Query and collection are required" });
     }
 
-    // Sanitize URL: remove trailing slashes and common dashboard paths
-    qdrantUrl = qdrantUrl.replace(/\/+$/, "").replace(/\/dashboard.*$/, "");
-
     try {
-      const headers: any = { "Content-Type": "application/json" };
-      if (qdrantApiKey) headers["api-key"] = qdrantApiKey;
-
-      let response;
-      if (action === "collections") {
-        response = await axios.get(`${qdrantUrl}/collections`, { headers });
-      } else if (action === "create-collection") {
-        const { name, vectorSize } = req.body;
-        response = await axios.put(`${qdrantUrl}/collections/${name}`, {
-          vectors: {
-            size: vectorSize,
-            distance: "Cosine"
-          }
-        }, { headers });
-      } else if (action === "upsert") {
-        const { collectionName, points } = req.body;
-        response = await axios.put(`${qdrantUrl}/collections/${collectionName}/points`, {
-          points
-        }, { headers });
-      } else if (action === "search") {
-        const { collectionName, vector, limit = 5 } = req.body;
-        response = await axios.post(`${qdrantUrl}/collections/${collectionName}/points/search`, {
-          vector,
-          limit,
-          with_payload: true
-        }, { headers });
-      } else {
-        return res.status(400).json({ error: "Invalid Qdrant action" });
-      }
-
-      res.json(response.data);
+      const vector = await Embedder.embed(query);
+      const results = await qdrant.search(collection, vector, filters, limit);
+      res.json({ results });
     } catch (error: any) {
-      console.error("Qdrant API Error:", error.response?.data || error.message);
-      res.status(error.response?.status || 500).json({ 
-        error: "Failed to communicate with Qdrant", 
-        details: error.response?.data || error.message 
-      });
+      res.status(500).json({ error: error.message });
     }
   });
 

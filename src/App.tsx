@@ -57,6 +57,8 @@ export default function App() {
   const [projectKey, setProjectKey] = useState(() => localStorage.getItem("jira_project_key") || process.env.VITE_JIRA_PROJECT_KEY || "");
   const [issueTypes, setIssueTypes] = useState(() => localStorage.getItem("jira_issue_types") || process.env.VITE_JIRA_ISSUE_TYPE || "Błąd w programie, Zadanie, Incydent");
   const [collectionName, setCollectionName] = useState(() => localStorage.getItem("qdrant_collection") || process.env.VITE_QDRANT_COLLECTION_NAME || "jira_issues");
+  const [lastSyncDate, setLastSyncDate] = useState(() => localStorage.getItem("last_sync_date") || "");
+  const [fullSync, setFullSync] = useState(false);
 
   // Persist settings to localStorage
   useEffect(() => {
@@ -70,6 +72,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("qdrant_collection", collectionName);
   }, [collectionName]);
+
+  useEffect(() => {
+    if (lastSyncDate) localStorage.setItem("last_sync_date", lastSyncDate);
+  }, [lastSyncDate]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -82,25 +88,22 @@ export default function App() {
     logs: []
   });
 
-  const addLog = (message: string) => {
-    setStatus(prev => ({ ...prev, logs: [message, ...prev.logs].slice(0, 50) }));
-  };
-
-  const generateEmbedding = async (text: string) => {
-    try {
-      const res = await fetch("/api/embed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      return data.embedding;
-    } catch (error) {
-      console.error("Local embedding error:", error);
-      throw error;
+  // Poll sync status from backend
+  useEffect(() => {
+    let interval: any;
+    if (status.isSyncing) {
+      interval = setInterval(async () => {
+        try {
+          const res = await fetch("/api/sync/status");
+          const data = await res.json();
+          setStatus(data);
+        } catch (error) {
+          console.error("Status poll error:", error);
+        }
+      }, 2000);
     }
-  };
+    return () => clearInterval(interval);
+  }, [status.isSyncing]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,43 +111,22 @@ export default function App() {
 
     setIsSearching(true);
     try {
-      const vector = await generateEmbedding(searchQuery);
-      const res = await fetch("/api/qdrant/search", {
+      const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collectionName, vector, limit: 5 })
+        body: JSON.stringify({ 
+          query: searchQuery, 
+          collection: collectionName,
+          limit: 10 
+        })
       });
       const data = await res.json();
-      setSearchResults(data.result || []);
+      setSearchResults(data.results || []);
     } catch (error: any) {
       console.error("Search error:", error);
       setStatus(prev => ({ ...prev, error: `Search failed: ${error.message}` }));
     } finally {
       setIsSearching(false);
-    }
-  };
-
-  const checkAndCreateCollection = async () => {
-    addLog(`Checking Qdrant collection: ${collectionName}...`);
-    try {
-      const collectionsRes = await fetch("/api/qdrant/collections");
-      const collections = await collectionsRes.json();
-      
-      const exists = collections.result?.collections?.some((c: any) => c.name === collectionName);
-      
-      if (!exists) {
-        addLog(`Collection ${collectionName} not found. Creating...`);
-        await fetch("/api/qdrant/create-collection", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: collectionName, vectorSize: 384 }) // Local embeddings are 384 dims
-        });
-        addLog(`Collection ${collectionName} created.`);
-      } else {
-        addLog(`Collection ${collectionName} exists.`);
-      }
-    } catch (error: any) {
-      throw new Error(`Qdrant connection failed: ${error.message}`);
     }
   };
 
@@ -154,125 +136,27 @@ export default function App() {
       return;
     }
 
-    setStatus(prev => ({ 
-      ...prev, 
-      isSyncing: true, 
-      error: null, 
-      processed: 0, 
-      total: 0,
-      logs: ["Starting sync process..."]
-    }));
-
     try {
-      await checkAndCreateCollection();
-
       const typesArray = issueTypes.split(",").map(t => t.trim()).filter(t => t);
       
-      for (const type of typesArray) {
-        addLog(`--- Processing Issue Type: ${type} ---`);
-        let startAt = 0;
-        let hasMore = true;
+      const res = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project: projectKey,
+          issueTypes: typesArray,
+          collection: collectionName,
+          updatedAfter: fullSync ? undefined : lastSyncDate
+        })
+      });
 
-        while (hasMore) {
-          addLog(`Fetching ${type} from Jira (startAt: ${startAt})...`);
-          // Use encodeURIComponent for Polish characters
-          const encodedType = encodeURIComponent(type);
-          const jiraRes = await fetch(`/api/jira/issues?project=${projectKey}&issueType=${encodedType}&startAt=${startAt}`);
-          const data = await jiraRes.json();
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
 
-          if (data.error) {
-            const detailMsg = typeof data.details === 'string' ? data.details : JSON.stringify(data.details);
-            throw new Error(`${data.error}: ${detailMsg}`);
-          }
-
-          const issues: JiraIssue[] = data.issues || [];
-          if (issues.length === 0) {
-            hasMore = false;
-            break;
-          }
-
-          setStatus(prev => ({ ...prev, total: prev.total + data.total }));
-
-          const points = [];
-          for (const issue of issues) {
-            setStatus(prev => ({ ...prev, currentIssue: issue.key }));
-            
-            // Extract comments
-            const commentsText = issue.fields.comment?.comments
-              ?.map(c => `[${c.author.displayName}]: ${c.body}`)
-              .join("\n") || "";
-
-            // Extract links
-            const linksText = issue.fields.issuelinks
-              ?.map(l => {
-                const related = l.outwardIssue || l.inwardIssue;
-                return related ? `${l.type.outward || l.type.inward} ${related.key}: ${related.fields.summary}` : "";
-              })
-              .filter(l => l)
-              .join("\n") || "";
-
-            // Extract custom fields (example from user JSON)
-            const packageTest = issue.fields.customfield_11703?.value || "";
-            const psp = issue.fields.customfield_12310 || "";
-
-            const textToEmbed = `
-              Key: ${issue.key}
-              Summary: ${issue.fields.summary}
-              Description: ${issue.fields.description || "No description"}
-              Type: ${issue.fields.issuetype.name}
-              Status: ${issue.fields.status.name}
-              Priority: ${issue.fields.priority.name}
-              Reporter: ${issue.fields.reporter.displayName}
-              Assignee: ${issue.fields.assignee?.displayName || "Unassigned"}
-              Created: ${issue.fields.created}
-              ${packageTest ? `Package Test: ${packageTest}` : ""}
-              ${psp ? `PSP: ${psp}` : ""}
-              
-              Links:
-              ${linksText || "No links"}
-              
-              Comments:
-              ${commentsText || "No comments"}
-            `.trim();
-
-            addLog(`Generating embedding for ${issue.key}...`);
-            const vector = await generateEmbedding(textToEmbed);
-
-            points.push({
-              id: Math.floor(Math.random() * 1000000000),
-              vector,
-              payload: {
-                key: issue.key,
-                summary: issue.fields.summary,
-                description: issue.fields.description,
-                created: issue.fields.created,
-                status: issue.fields.status.name,
-                issueType: issue.fields.issuetype.name,
-                text: textToEmbed
-              }
-            });
-
-            setStatus(prev => ({ ...prev, processed: prev.processed + 1 }));
-          }
-
-          addLog(`Upserting ${points.length} points to Qdrant...`);
-          await fetch("/api/qdrant/upsert", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ collectionName, points })
-          });
-
-          startAt += issues.length;
-          if (startAt >= data.total) hasMore = false;
-        }
-      }
-
-      addLog("Sync completed successfully!");
-      setStatus(prev => ({ ...prev, isSyncing: false, currentIssue: "" }));
+      setStatus(prev => ({ ...prev, isSyncing: true, logs: ["Sync request sent to backend..."] }));
     } catch (error: any) {
-      console.error("Sync error:", error);
-      setStatus(prev => ({ ...prev, isSyncing: false, error: error.message }));
-      addLog(`Error: ${error.message}`);
+      console.error("Sync trigger error:", error);
+      setStatus(prev => ({ ...prev, error: error.message }));
     }
   };
 
@@ -432,6 +316,30 @@ export default function App() {
                         className="w-full bg-slate-50 border border-border-main rounded px-3 py-2 text-sm font-semibold focus:ring-2 focus:ring-primary-main outline-none"
                       />
                     </div>
+                    
+                    <div className="flex items-center justify-between py-3 border-b border-border-main">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Pełna synchronizacja</span>
+                        <span className="text-[9px] text-text-muted">Zignoruj datę ostatniej synchronizacji</span>
+                      </div>
+                      <button 
+                        onClick={() => setFullSync(!fullSync)}
+                        className={`w-10 h-5 rounded-full relative transition-colors ${fullSync ? 'bg-primary-main' : 'bg-slate-200'}`}
+                      >
+                        <motion.div 
+                          className="absolute top-1 w-3 h-3 bg-white rounded-full"
+                          animate={{ left: fullSync ? '24px' : '4px' }}
+                        />
+                      </button>
+                    </div>
+
+                    {lastSyncDate && !fullSync && (
+                      <div className="py-3 border-b border-border-main">
+                        <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Ostatnia synchronizacja</label>
+                        <div className="text-[11px] font-mono text-primary-main mt-1">{lastSyncDate}</div>
+                      </div>
+                    )}
+
                     <div className="flex justify-between py-3 text-xs">
                       <span className="text-text-muted">Model Embeddingów</span>
                       <span className="font-bold text-primary-main">Local (MiniLM-L6)</span>
@@ -549,21 +457,28 @@ export default function App() {
                       <div className="flex justify-between items-start mb-4">
                         <div className="flex items-center gap-3">
                           <span className="bg-blue-50 text-primary-main px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider">
-                            {result.payload.key}
+                            {result.payload.issue_key}
                           </span>
                           <h4 className="font-bold text-lg">{result.payload.summary}</h4>
+                          <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                            result.payload.chunk_type === 'main' ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'
+                          }`}>
+                            {result.payload.chunk_type}
+                          </span>
                         </div>
                         <span className="text-[10px] font-mono text-text-muted bg-slate-50 px-2 py-1 rounded">
                           Score: {Math.round(result.score * 100)}%
                         </span>
                       </div>
-                      <p className="text-sm text-text-muted line-clamp-3 mb-4 leading-relaxed">
-                        {result.payload.description || "Brak opisu."}
-                      </p>
+                      <div className="text-sm text-text-muted mb-4 leading-relaxed bg-slate-50/50 p-3 rounded-lg border border-slate-100 italic">
+                        "{result.payload.text}"
+                      </div>
                       <div className="flex items-center justify-between text-[10px] text-text-muted font-medium uppercase tracking-widest">
                         <div className="flex gap-4">
                           <span>Status: {result.payload.status}</span>
-                          <span>Utworzono: {new Date(result.payload.created).toLocaleDateString()}</span>
+                          <span>Typ: {result.payload.issue_type}</span>
+                          <span>Priorytet: {result.payload.priority}</span>
+                          <span>Aktualizacja: {new Date(result.payload.updated).toLocaleDateString()}</span>
                         </div>
                         <button className="text-primary-main opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
                           Otwórz w Jira <ExternalLink className="w-3 h-3" />
